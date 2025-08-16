@@ -1,0 +1,17 @@
+- name: Template MySQL configuration
+  template:
+    src: mysqld.cnf.j2
+    dest: /etc/mysql/mysql.conf.d/mysqld.cnf
+    owner: root
+    group: root
+    mode: 0644
+  notify: Restart MySQL
+
+- name: Create admin user (optional)
+  mysql_user:
+    name: "{{ mysql_admin_user }}"
+    password: "{{ mysql_admin_password }}"
+    priv: "*.*:ALL,GRANT"
+    host: "localhost"
+    state: present
+    login_unix_socket: /var/run/mysqld/mysqld.sock

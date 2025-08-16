@@ -1,0 +1,8 @@
+- name: Test MySQL service
+  command: mysqladmin ping
+  register: mysql_ping
+  changed_when: false
+
+- name: Debug MySQL ping
+  debug:
+    msg: "{{ mysql_ping.stdout }}"

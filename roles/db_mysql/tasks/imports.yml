@@ -1,0 +1,56 @@
+- name: Import SQL dumps
+  when: mysql_imports | length > 0
+  block:
+    - name: Copy dump file
+      copy:
+        src: "{{ item.dump_file }}"
+        dest: "/tmp/{{ item.dump_file | basename }}"
+      loop: "{{ mysql_imports }}"
+
+    - name: Remove DEFINER clauses
+      replace:
+        path: "/tmp/{{ item.dump_file | basename }}"
+        regexp: "DEFINER=`[^`]+`@`[^`]+`"
+        replace: ""
+      loop: "{{ mysql_imports }}"
+
+    - name: Import SQL dump safely into the database
+      shell: |
+        mysql --user="{{ mysql_admin_user }}" --password="{{ mysql_admin_password }}" \
+              --database="{{ item.db }}" \
+              --max_allowed_packet=512M < "/tmp/{{ item.dump_file | basename }}"
+      loop: "{{ mysql_imports }}"
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+
+
+
+
+
+    # - name: Import dump into database (ignore foreign key checks)
+    #   shell: |
+    #     mysql --user="{{ mysql_admin_user }}" --password="{{ mysql_admin_password }}" \
+    #           --database="{{ item.db }}" --execute="SET FOREIGN_KEY_CHECKS=0;"
+    #     mysql --user="{{ mysql_admin_user }}" --password="{{ mysql_admin_password }}" \
+    #           "{{ item.db }}" < "/tmp/{{ item.dump_file | basename }}"
+    #     mysql --user="{{ mysql_admin_user }}" --password="{{ mysql_admin_password }}" \
+    #           --database="{{ item.db }}" --execute="SET FOREIGN_KEY_CHECKS=1;"
+    #   loop: "{{ mysql_imports }}"
+    #   vars:
+    #     ansible_python_interpreter: /usr/bin/python3
+
+
+    # - name: Import dump into database
+    #   mysql_db:
+    #     name: "{{ item.db }}"
+    #     state: import
+    #     target: "/tmp/{{ item.dump_file | basename }}"
+    #     login_user: "{{ mysql_admin_user }}"
+    #     login_password: "{{ mysql_admin_password }}"
+    #     collation: "utf8mb4_0900_ai_ci"
+    #     encoding: "utf8mb4"
+    #     import_options: "--set-foreign-key-checks=0"
+    #   loop: "{{ mysql_imports }}"
+    #   vars:
+    #     ansible_python_interpreter: /usr/bin/python3
+

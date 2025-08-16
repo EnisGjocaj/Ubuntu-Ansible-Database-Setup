@@ -1,0 +1,6 @@
+- import_tasks: install.yml
+- import_tasks: configure.yml
+- import_tasks: databases.yml
+# - import_tasks: imports.yml
+- import_tasks: backups.yml
+- import_tasks: test.yml

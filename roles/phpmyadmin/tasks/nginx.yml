@@ -1,0 +1,15 @@
+- name: Deploy Nginx proxy for phpMyAdmin
+  template:
+    src: nginx-phpmyadmin.conf.j2
+    dest: "/etc/nginx/sites-available/phpmyadmin"
+  notify: Reload nginx
+  become: true
+
+- name: Enable Nginx site for phpMyAdmin
+  file:
+    src: "/etc/nginx/sites-available/phpmyadmin"
+    dest: "/etc/nginx/sites-enabled/phpmyadmin"
+    state: link
+    force: yes
+  notify: Reload nginx
+  become: true

@@ -1,0 +1,27 @@
+- name: Install MySQL server
+  apt:
+    name: mysql-server
+    state: present
+    update_cache: yes
+
+- name: Ensure MySQL is started and enabled
+  service:
+    name: mysql
+    state: started
+    enabled: yes
+
+- name: Install required Python MySQL library for Ansible
+  apt:
+    name:
+      - python3-pymysql
+    state: present
+    update_cache: yes
+
+- name: Install Python3 pip
+  apt:
+    name: python3-pip
+    state: present
+    update_cache: yes
+
+# Removed the pip install of PyMySQL to avoid "externally-managed environment" errors
+# The APT-installed python3-pymysql is sufficient for Ansible's MySQL modules

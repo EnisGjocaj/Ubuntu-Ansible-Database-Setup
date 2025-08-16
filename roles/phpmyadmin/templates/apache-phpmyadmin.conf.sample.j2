@@ -1,0 +1,20 @@
+<VirtualHost *:8080>
+    # You can keep ServerName or remove it
+    ServerName ip-address
+
+    # Main site DocumentRoot can remain unchanged
+    DocumentRoot /var/www/html
+
+    # Alias to point /phpmyadmin to the real files
+    Alias /phpmyadmin /usr/share/phpmyadmin
+
+    <Directory /usr/share/phpmyadmin>
+        Options FollowSymLinks
+        DirectoryIndex index.php
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    ErrorLog ${APACHE_LOG_DIR}/phpmyadmin-error.log
+    CustomLog ${APACHE_LOG_DIR}/phpmyadmin-access.log combined
+</VirtualHost>

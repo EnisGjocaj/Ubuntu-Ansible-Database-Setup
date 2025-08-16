@@ -1,0 +1,30 @@
+- name: Create backup directory
+  file:
+    path: "{{ mysql_backup_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+
+- name: Create backup script
+  copy:
+    dest: /usr/local/bin/mysql_backup.sh
+    content: |
+      #!/bin/bash
+      set -e
+      STAMP=$(date +%F_%H-%M)
+      mysqldump --single-transaction --routines --triggers --events \
+        --all-databases | gzip > {{ mysql_backup_dir }}/all_${STAMP}.sql.gz
+      find {{ mysql_backup_dir }} -type f -name '*.sql.gz' -mtime +{{ mysql_backup_keep_days }} -delete
+    owner: root
+    group: root
+    mode: 0755
+
+- name: Schedule backup cron
+  cron:
+    name: "MySQL Weekly Backup"
+    minute: "0"
+    hour: "{{ mysql_backup_time.split(':')[0] }}"
+    weekday: "{{ mysql_backup_weekday }}"
+    job: "/usr/local/bin/mysql_backup.sh"
+

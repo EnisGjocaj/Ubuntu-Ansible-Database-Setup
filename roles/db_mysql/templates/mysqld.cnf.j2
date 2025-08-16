@@ -1,0 +1,11 @@
+[mysqld]
+bind-address = {{ mysql_bind_address }}
+mysqlx-bind-address = {{ mysql_bind_address }}
+skip-name-resolve
+
+character-set-server = {{ mysql_utf8_charset }}
+collation-server     = {{ mysql_utf8_collation }}
+
+innodb_buffer_pool_size = {{ mysql_innodb_buffer_pool_size }}
+innodb_log_file_size    = {{ mysql_innodb_log_file_size }}
+innodb_flush_log_at_trx_commit = {{ mysql_innodb_flush_log_at_trx_commit }}

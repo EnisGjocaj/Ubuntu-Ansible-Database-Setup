@@ -1,0 +1,7 @@
+- name: Setup MySQL Databases
+  hosts: web
+  become: true
+  roles:
+    - db_mysql
+    - phpmyadmin
+

@@ -1,0 +1,30 @@
+mysql_bind_address: "127.0.0.1"
+mysql_utf8_charset: "utf8mb4"
+mysql_utf8_collation: "utf8mb4_0900_ai_ci"
+
+# Performance tuning
+mysql_innodb_buffer_pool_size: "1G"
+mysql_innodb_log_file_size: "256M"
+mysql_innodb_flush_log_at_trx_commit: 1
+
+# Admin user
+mysql_admin_user: "admin_user"
+mysql_admin_password: "changeme123"
+
+mysql_databases:
+  - name: example_db
+
+mysql_users:
+  - name: example_app_user
+    password: "changeme123"
+    priv: "example_db.*:ALL"
+
+mysql_imports:
+  - db: example_db
+    dump_file: files/dummy.sql
+
+# Backup settings
+mysql_backup_dir: "/var/backups/mysql"
+mysql_backup_keep_days: 28
+mysql_backup_time: "2:00"
+mysql_backup_weekday: 0

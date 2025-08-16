@@ -1,0 +1,10 @@
+- name: Reload nginx
+  service:
+    name: nginx
+    state: reloaded
+  become: true
+
+- name: Reload Apache
+  service:
+    name: apache2
+    state: reloaded

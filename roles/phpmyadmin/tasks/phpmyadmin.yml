@@ -1,0 +1,48 @@
+---
+- name: Install phpMyAdmin and dependencies
+  apt:
+    name:
+      - phpmyadmin
+      - php-mbstring
+      - php-zip
+      - php-gd
+      - php-json
+      - php-curl
+    state: present
+    update_cache: yes
+
+- name: Enable mbstring extension
+  command: phpenmod mbstring
+
+- name: Restart Apache
+  service:
+    name: apache2
+    state: restarted
+
+# - name: Symlink phpMyAdmin into web root
+#   file:
+#     src: /usr/share/phpmyadmin
+#     dest: /var/www/html/phpmyadmin
+#     state: link
+
+
+- name: Deploy Apache vhost for phpMyAdmin
+  template:
+    src: apache-phpmyadmin.conf.j2
+    dest: /etc/apache2/sites-available/phpmyadmin.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload Apache
+
+
+- name: Enable phpMyAdmin Apache site
+  command: a2ensite phpmyadmin.conf
+  args:
+    creates: /etc/apache2/sites-enabled/phpmyadmin.conf
+  notify: Reload Apache
+
+
+- name: Disable Apache default site
+  command: a2dissite 000-default.conf
+  notify: Reload Apache
