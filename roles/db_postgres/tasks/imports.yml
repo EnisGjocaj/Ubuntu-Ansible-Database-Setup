@@ -1,0 +1,15 @@
+- name: Import SQL dumps (optional)
+  when: postgres_imports | length > 0
+  block:
+    - name: Copy SQL dump file
+      copy:
+        src: "{{ item.dump_file }}"
+        dest: "/tmp/{{ item.dump_file | basename }}"
+      loop: "{{ postgres_imports }}"
+
+    - name: Import SQL dump into database
+      shell: |
+        PGPASSWORD="{{ postgres_admin_password }}" psql -U {{ postgres_admin_user }} -d {{ item.db }} -f "/tmp/{{ item.dump_file | basename }}"
+      loop: "{{ postgres_imports }}"
+      vars:
+        ansible_python_interpreter: /usr/bin/python3

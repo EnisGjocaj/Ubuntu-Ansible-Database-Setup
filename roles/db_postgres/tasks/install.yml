@@ -1,0 +1,24 @@
+- name: Install PostgreSQL server
+  apt:
+    name: postgresql
+    state: present
+    update_cache: yes
+
+- name: Ensure PostgreSQL is started and enabled
+  service:
+    name: postgresql
+    state: started
+    enabled: yes
+
+- name: Install required Python PostgreSQL library for Ansible
+  apt:
+    name:
+      - python3-psycopg2
+    state: present
+    update_cache: yes
+
+- name: Install Python3 pip
+  apt:
+    name: python3-pip
+    state: present
+    update_cache: yes

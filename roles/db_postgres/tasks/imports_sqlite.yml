@@ -1,0 +1,28 @@
+- name: Import SQLite3 database to PostgreSQL (optional)
+  when: postgres_sqlite_import is defined and postgres_sqlite_import | length > 0
+  block:
+
+    - name: Install pgloader
+      apt:
+        name: pgloader
+        state: present
+        update_cache: yes
+
+    - name: Copy SQLite3 file to server
+      copy:
+        src: "{{ item }}"
+        dest: "/tmp/{{ item | basename }}"
+      loop: "{{ postgres_sqlite_import }}"
+
+    - name: Convert SQLite3 to PostgreSQL using pgloader
+      shell: |
+        pgloader /tmp/{{ item | basename }} postgresql://{{ postgres_admin_user }}:{{ postgres_admin_password }}@localhost/{{ postgres_databases[0].name }}
+      loop: "{{ postgres_sqlite_import }}"
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+
+    - name: Remove temporary SQLite3 file
+      file:
+        path: "/tmp/{{ item | basename }}"
+        state: absent
+      loop: "{{ postgres_sqlite_import }}"

@@ -1,0 +1,16 @@
+# Create databases if they don't exist (no deletion by default)
+- name: Create PostgreSQL databases
+  postgresql_db:
+    name: "{{ item.name }}"
+    owner: "{{ item.owner }}"
+    encoding: "UTF8"
+    state: present
+  loop: "{{ postgres_databases }}"
+
+# Create database users
+- name: Create PostgreSQL users
+  postgresql_user:
+    name: "{{ item.name }}"
+    password: "{{ item.password }}"
+    state: present
+  loop: "{{ postgres_users }}"

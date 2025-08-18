@@ -7,5 +7,6 @@ inventory.ini
 vars/
 files/
 roles/db_mysql/defaults/main.yml
+roles/db_postgres/defaults/main.yml
 roles/phpmyadmin/templates/nginx-phpmyadmin.conf.j2
 roles/phpmyadmin/templates/apache-phpmyadmin.conf.j2

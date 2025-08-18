@@ -1,0 +1,8 @@
+listen_addresses = '{{ postgres_bind_address }}'
+port = {{ postgres_port }}
+max_connections = 100
+shared_buffers = 128MB
+logging_collector = on
+log_directory = 'pg_log'
+log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+log_min_messages = warning
