@@ -1,4 +1,4 @@
-- name: Import SQLite3 database to PostgreSQL (optional)
+- name: Import SQLite3 database to PostgreSQL (idempotent)
   when: postgres_sqlite_import is defined and postgres_sqlite_import | length > 0
   block:
 
@@ -14,10 +14,22 @@
         dest: "/tmp/{{ item | basename }}"
       loop: "{{ postgres_sqlite_import }}"
 
-    - name: Convert SQLite3 to PostgreSQL using pgloader
+    - name: Check if target PostgreSQL database is empty
+      community.postgresql.postgresql_query:
+        login_user: "{{ postgres_admin_user }}"
+        login_password: "{{ postgres_admin_password }}"
+        login_host: "127.0.0.1"
+        db: "{{ postgres_databases[0].name }}"
+        query: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';"
+      register: pg_tables_count
+      become: true
+      become_user: postgres
+
+    - name: Run pgloader only if database is empty
       shell: |
         pgloader /tmp/{{ item | basename }} postgresql://{{ postgres_admin_user }}:{{ postgres_admin_password }}@localhost/{{ postgres_databases[0].name }}
       loop: "{{ postgres_sqlite_import }}"
+      when: pg_tables_count.query_result[0].count | int == 0
       vars:
         ansible_python_interpreter: /usr/bin/python3
 

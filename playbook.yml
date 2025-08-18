@@ -1,8 +1,7 @@
-- name: Setup PostgreSQL Databases
+
+- name: Setup postgresss
   hosts: web
   become: true
   roles:
-    # - db_mysql
-    # - phpmyadmin
     - db_postgres
 

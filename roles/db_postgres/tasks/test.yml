@@ -1,8 +1,5 @@
-- name: Test PostgreSQL service
-  command: pg_isready
-  register: postgres_status
-  changed_when: false
+- name: Test PostgreSQL cluster
+  command: pg_ctlcluster 16 main status
+  become: true
+  become_user: postgres
 
-- name: Debug PostgreSQL status
-  debug:
-    msg: "{{ postgres_status.stdout }}"

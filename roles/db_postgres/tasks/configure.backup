@@ -1,0 +1,58 @@
+- name: Get installed PostgreSQL major version
+  shell: "psql -V | awk '{print $3}' | cut -d '.' -f1"
+  register: postgres_version
+  changed_when: false
+
+
+- name: Ensure PostgreSQL is started and enabled
+  service:
+    name: postgresql
+    state: started
+    enabled: yes
+
+- name: Check existing PostgreSQL clusters
+  command: pg_lsclusters
+  register: pg_clusters
+  changed_when: false
+
+- name: Initialize PostgreSQL cluster if missing
+  command: pg_createcluster {{ postgres_version.stdout }} main --start
+  when: "'main' not in pg_clusters.stdout"
+
+- name: Wait for PostgreSQL to be ready
+  wait_for:
+    port: 5432
+    host: 127.0.0.1
+    delay: 2
+    timeout: 30
+
+- name: Set PostgreSQL configuration directory dynamically
+  set_fact:
+    postgres_conf_dir: "/etc/postgresql/{{ postgres_version.stdout }}/main"
+
+- name: Ensure PostgreSQL configuration directory exists
+  file:
+    path: "{{ postgres_conf_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: 0755
+
+- name: Template PostgreSQL configuration
+  template:
+    src: postgresql.conf.j2
+    dest: "{{ postgres_conf_dir }}/postgresql.conf"
+    owner: postgres
+    group: postgres
+    mode: 0644
+  notify: Restart PostgreSQL
+
+- name: Create PostgreSQL admin user
+  community.postgresql.postgresql_user:
+    name: "{{ postgres_admin_user }}"
+    password: "{{ postgres_admin_password }}"
+    role_attr_flags: "SUPERUSER,CREATEDB,CREATEROLE"
+    state: present
+  become: true
+  become_user: postgres
+

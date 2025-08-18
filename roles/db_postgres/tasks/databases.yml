@@ -1,16 +1,26 @@
-# Create databases if they don't exist (no deletion by default)
+# databases.yml
+
+# 1. Create PostgreSQL users first
+- name: Create PostgreSQL users
+  community.postgresql.postgresql_user:
+    name: "{{ item.name }}"
+    password: "{{ item.password }}"
+    state: present
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    login_host: "127.0.0.1"
+    login_db: "postgres"   # <-- add this
+  loop: "{{ postgres_users }}"
+
+
+# . Then create PostgreSQL databases owned by these users
 - name: Create PostgreSQL databases
-  postgresql_db:
+  community.postgresql.postgresql_db:
     name: "{{ item.name }}"
     owner: "{{ item.owner }}"
     encoding: "UTF8"
     state: present
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    login_host: "127.0.0.1"
   loop: "{{ postgres_databases }}"
-
-# Create database users
-- name: Create PostgreSQL users
-  postgresql_user:
-    name: "{{ item.name }}"
-    password: "{{ item.password }}"
-    state: present
-  loop: "{{ postgres_users }}"
