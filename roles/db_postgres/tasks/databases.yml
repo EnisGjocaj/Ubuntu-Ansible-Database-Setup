@@ -1,6 +1,72 @@
-# databases.yml
+---
+# =============================================================================
+# PostgreSQL Database and User Management
+# =============================================================================
 
-# 1. Create PostgreSQL users first
+
+# --- Input Validation -------------------------------------------------------
+
+- name: Validate postgres_databases variable
+  assert:
+    that:
+      - postgres_databases is defined
+      - postgres_databases | length > 0
+      - postgres_databases is iterable
+    fail_msg: "postgres_databases must be defined and contain at least one database"
+    success_msg: "Found {{ postgres_databases | length }} database(s) to create"
+
+- name: Validate postgres_users variable
+  assert:
+    that:
+      - postgres_users is defined
+      - postgres_users | length > 0
+      - postgres_users is iterable
+    fail_msg: "postgres_users must be defined and contain at least one user"
+    success_msg: "Found {{ postgres_users | length }} user(s) to create"
+
+- name: Validate database owners exist in users list
+  assert:
+    that:
+      - item.owner in (postgres_users | map(attribute='name') | list)
+    fail_msg: "Database '{{ item.name }}' owner '{{ item.owner }}' not found in postgres_users list"
+    success_msg: "Database '{{ item.name }}' owner '{{ item.owner }}' is valid"
+  loop: "{{ postgres_databases }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# --- Test Admin Connection --------------------------------------------------
+
+- name: Test admin user connection before proceeding
+  postgresql_query:
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    login_host: "127.0.0.1"
+    db: "postgres"
+    query: "SELECT current_user;"
+  register: admin_connection_check
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Display admin connection status
+  debug:
+    msg: "Admin user '{{ postgres_admin_user }}' connection successful"
+
+# --- User Creation -----------------------------------------------------------
+
+- name: Check existing PostgreSQL users
+  postgresql_query:
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    login_host: "127.0.0.1"
+    db: "postgres"
+    query: "SELECT usename FROM pg_user WHERE usename = '{{ item.name }}';"
+  register: existing_users_check
+  loop: "{{ postgres_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
 - name: Create PostgreSQL users
   community.postgresql.postgresql_user:
     name: "{{ item.name }}"
@@ -9,18 +75,155 @@
     login_user: "{{ postgres_admin_user }}"
     login_password: "{{ postgres_admin_password }}"
     login_host: "127.0.0.1"
-    login_db: "postgres"   # <-- add this
+    login_db: "postgres"
+    role_attr_flags: "{{ item.role_attr_flags | default('CREATEDB') }}"
+    expires: "{{ item.expires | default(omit) }}"
   loop: "{{ postgres_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: user_creation_results
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
 
+- name: Display user creation results
+  debug:
+    msg:
+      - "User: {{ item.item.name }}"
+      - "Created: {{ item.changed }}"
+      - "Status: {{ 'New user created' if item.changed else 'User already exists' }}"
+  loop: "{{ user_creation_results.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
 
-# . Then create PostgreSQL databases owned by these users
+# --- Database Creation ------------------------------------------------------
+
+- name: Check existing PostgreSQL databases
+  postgresql_query:
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    login_host: "127.0.0.1"
+    db: "postgres"
+    query: "SELECT datname FROM pg_database WHERE datname = '{{ item.name }}';"
+  register: existing_databases_check
+  loop: "{{ postgres_databases }}"
+  loop_control:
+    label: "{{ item.name }}"
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
 - name: Create PostgreSQL databases
   community.postgresql.postgresql_db:
     name: "{{ item.name }}"
     owner: "{{ item.owner }}"
-    encoding: "UTF8"
+    encoding: "{{ item.encoding | default('UTF8') }}"
+    lc_collate: "{{ item.lc_collate | default('en_US.UTF-8') }}"
+    lc_ctype: "{{ item.lc_ctype | default('en_US.UTF-8') }}"
+    template: "{{ item.template | default('template0') }}"
     state: present
     login_user: "{{ postgres_admin_user }}"
     login_password: "{{ postgres_admin_password }}"
     login_host: "127.0.0.1"
   loop: "{{ postgres_databases }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: database_creation_results
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Display database creation results
+  debug:
+    msg:
+      - "Database: {{ item.item.name }}"
+      - "Owner: {{ item.item.owner }}"
+      - "Created: {{ item.changed }}"
+      - "Status: {{ 'New database created' if item.changed else 'Database already exists' }}"
+  loop: "{{ database_creation_results.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+# --- Grant Additional Privileges (if specified) ----------------------------
+
+- name: Grant additional database privileges to users
+  community.postgresql.postgresql_privs:
+    database: "{{ item.0.name }}"
+    roles: "{{ item.1.name }}"
+    privs: "{{ item.1.database_privs | default('ALL') }}"
+    type: database
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    login_host: "127.0.0.1"
+  loop: "{{ postgres_databases | subelements('additional_users', skip_missing=True) }}"
+  loop_control:
+    label: "DB: {{ item.0.name }}, User: {{ item.1.name }}"
+  when: item.0.additional_users is defined
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+# --- Database Connection Testing --------------------------------------------
+
+- name: Test database connections for each user
+  postgresql_query:
+    login_user: "{{ item.owner }}"
+    login_password: "{{ (postgres_users | selectattr('name', 'equalto', item.owner) | first).password }}"
+    login_host: "127.0.0.1"
+    db: "{{ item.name }}"
+    query: "SELECT current_database(), current_user, version();"
+  register: database_connection_tests
+  loop: "{{ postgres_databases }}"
+  loop_control:
+    label: "{{ item.name }}"
+  failed_when: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Display database connection test results
+  debug:
+    msg:
+      - "Database: {{ item.item.name }}"
+      - "User: {{ item.item.owner }}"
+      - "Connection successful: {{ not item.failed }}"
+      - "Current database: {{ item.query_result[0].current_database | default('N/A') }}"
+  loop: "{{ database_connection_tests.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+# --- Final Validation -------------------------------------------------------
+
+- name: Get final database and user summary
+  postgresql_query:
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    login_host: "127.0.0.1"
+    db: "postgres"
+    query: |
+      SELECT 
+        d.datname as database_name,
+        pg_catalog.pg_get_userbyid(d.datdba) as owner,
+        pg_encoding_to_char(d.encoding) as encoding,
+        d.datcollate as collate,
+        d.datctype as ctype
+      FROM pg_database d 
+      WHERE d.datistemplate = false 
+      ORDER BY d.datname;
+  register: final_database_summary
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Display final database summary
+  debug:
+    msg:
+      - "=== Database Creation Summary ==="
+      - "Total databases created/verified: {{ postgres_databases | length }}"
+      - "Total users created/verified: {{ postgres_users | length }}"
+      - "Database details:"
+      - "{{ final_database_summary.query_result | default([]) }}"
+
+- name: Verify all requested databases exist
+  assert:
+    that:
+      - item.name in (final_database_summary.query_result | map(attribute='database_name') | list)
+    fail_msg: "Database '{{ item.name }}' was not created successfully"
+    success_msg: "Database '{{ item.name }}' exists and is accessible"
+  loop: "{{ postgres_databases }}"
+  loop_control:
+    label: "{{ item.name }}"

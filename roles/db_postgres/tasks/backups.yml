@@ -27,3 +27,4 @@
     hour: "{{ postgres_backup_time.split(':')[0] }}"
     weekday: "{{ postgres_backup_weekday }}"
     job: "/usr/local/bin/postgres_backup.sh"
+

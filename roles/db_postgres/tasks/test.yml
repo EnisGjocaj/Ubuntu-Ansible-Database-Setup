@@ -1,5 +1,203 @@
-- name: Test PostgreSQL cluster
-  command: pg_ctlcluster 16 main status
+---
+# =============================================================================
+# PostgreSQL Testing & Validation
+# =============================================================================
+
+# --- Version Detection for Testing ------------------------------------------
+
+- name: Detect PostgreSQL version for testing
+  shell: "pg_config --version | awk '{print $2}' | cut -d '.' -f1"
+  register: test_postgres_version
+  changed_when: false
+  failed_when: false
+
+- name: Set PostgreSQL version for tests
+  set_fact:
+    postgres_test_version: "{{ test_postgres_version.stdout if test_postgres_version.rc == 0 and test_postgres_version.stdout | length > 0 else '16' }}"
+
+# --- Directory and File Validation ------------------------------------------
+
+- name: Check PostgreSQL data directory
+  stat:
+    path: "/var/lib/postgresql/{{ postgres_test_version }}/main"
+  register: pg_data_dir_test
+
+- name: Check PostgreSQL config directory
+  stat:
+    path: "/etc/postgresql/{{ postgres_test_version }}/main"
+  register: pg_config_dir_test
+
+- name: Check PG_VERSION file
+  stat:
+    path: "/var/lib/postgresql/{{ postgres_test_version }}/main/PG_VERSION"
+  register: pg_version_file_test
+
+- name: Check postgresql.conf file
+  stat:
+    path: "/etc/postgresql/{{ postgres_test_version }}/main/postgresql.conf"
+  register: pg_conf_file_test
+
+- name: Display directory validation results
+  debug:
+    msg:
+      - "PostgreSQL version: {{ postgres_test_version }}"
+      - "Data directory exists: {{ pg_data_dir_test.stat.exists }}"
+      - "Config directory exists: {{ pg_config_dir_test.stat.exists }}"
+      - "PG_VERSION file exists: {{ pg_version_file_test.stat.exists }}"
+      - "postgresql.conf exists: {{ pg_conf_file_test.stat.exists }}"
+
+# --- Process and Connection Testing -----------------------------------------
+
+- name: Check if PostgreSQL process is running
+  shell: "pgrep -f 'postgres.*main' || echo 'not_running'"
+  register: postgres_process_test
+  changed_when: false
+
+- name: Test PostgreSQL connection readiness
+  shell: "pg_isready -h 127.0.0.1 -p 5432"
+  register: postgres_ready_test
+  changed_when: false
+  failed_when: false
+
+- name: Display process and connection status
+  debug:
+    msg:
+      - "PostgreSQL process running: {{ 'Yes' if postgres_process_test.stdout != 'not_running' else 'No' }}"
+      - "PostgreSQL accepting connections: {{ 'Yes' if postgres_ready_test.rc == 0 else 'No' }}"
+      - "Connection test output: {{ postgres_ready_test.stdout | default('N/A') }}"
+
+# --- Service Status Testing -------------------------------------------------
+
+- name: Check PostgreSQL service status
+  service_facts:
+
+- name: Display PostgreSQL service status
+  debug:
+    msg:
+      - "PostgreSQL service state: {{ ansible_facts.services['postgresql.service'].state | default('unknown') }}"
+      - "PostgreSQL service enabled: {{ ansible_facts.services['postgresql.service'].status | default('unknown') }}"
+
+# --- Database Connectivity Testing ------------------------------------------
+
+- name: Test PostgreSQL connection as postgres user
   become: true
   become_user: postgres
+  postgresql_query:
+    db: postgres
+    query: "SELECT version(), current_database(), current_user;"
+  register: postgres_user_test
+  failed_when: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
 
+- name: Display postgres user connection test
+  debug:
+    msg:
+      - "Postgres user connection successful: {{ postgres_user_test.failed == false }}"
+      - "Database: {{ postgres_user_test.query_result[0].current_database | default('N/A') }}"
+      - "User: {{ postgres_user_test.query_result[0].current_user | default('N/A') }}"
+
+# --- Admin User Testing -----------------------------------------------------
+
+- name: Test admin user connection
+  postgresql_query:
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    login_host: "127.0.0.1"
+    db: "postgres"
+    query: "SELECT current_user, current_database(), usename, usesuper FROM pg_user WHERE usename = current_user;"
+  register: admin_user_test
+  failed_when: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Display admin user test results
+  debug:
+    msg:
+      - "Admin user connection successful: {{ admin_user_test.failed == false }}"
+      - "Admin user: {{ admin_user_test.query_result[0].current_user | default('N/A') }}"
+      - "Is superuser: {{ admin_user_test.query_result[0].usesuper | default('N/A') }}"
+
+# --- Database and User Validation -------------------------------------------
+
+- name: List all databases
+  postgresql_query:
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    login_host: "127.0.0.1"
+    db: "postgres"
+    query: "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;"
+  register: database_list_test
+  failed_when: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: List all users
+  postgresql_query:
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    login_host: "127.0.0.1"
+    db: "postgres"
+    query: "SELECT usename, usesuper, usecreatedb FROM pg_user ORDER BY usename;"
+  register: user_list_test
+  failed_when: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Display database and user information
+  debug:
+    msg:
+      - "Available databases: {{ database_list_test.query_result | map(attribute='datname') | list | default(['N/A']) }}"
+      - "Available users: {{ user_list_test.query_result | map(attribute='usename') | list | default(['N/A']) }}"
+
+# --- Configuration Validation -----------------------------------------------
+
+- name: Test PostgreSQL configuration settings
+  postgresql_query:
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    login_host: "127.0.0.1"
+    db: "postgres"
+    query: "SELECT name, setting FROM pg_settings WHERE name IN ('listen_addresses', 'port', 'max_connections') ORDER BY name;"
+  register: config_test
+  failed_when: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Display configuration settings
+  debug:
+    msg: "PostgreSQL configuration: {{ config_test.query_result | default(['N/A']) }}"
+
+# --- Overall Health Summary -------------------------------------------------
+
+- name: Calculate overall health status
+  set_fact:
+    postgres_health_status:
+      directories_ok: "{{ pg_data_dir_test.stat.exists and pg_config_dir_test.stat.exists and pg_version_file_test.stat.exists }}"
+      process_running: "{{ postgres_process_test.stdout != 'not_running' }}"
+      accepting_connections: "{{ postgres_ready_test.rc == 0 }}"
+      service_active: "{{ ansible_facts.services['postgresql.service'].state | default('') == 'running' }}"
+      postgres_user_ok: "{{ postgres_user_test.failed == false }}"
+      admin_user_ok: "{{ admin_user_test.failed == false }}"
+      config_accessible: "{{ config_test.failed == false }}"
+
+- name: Display comprehensive health summary
+  debug:
+    msg:
+      - "=== PostgreSQL Health Summary ==="
+      - "PostgreSQL Version: {{ postgres_test_version }}"
+      - "Directories OK: {{ postgres_health_status.directories_ok }}"
+      - "Process Running: {{ postgres_health_status.process_running }}"
+      - "Accepting Connections: {{ postgres_health_status.accepting_connections }}"
+      - "Service Active: {{ postgres_health_status.service_active }}"
+      - "Postgres User OK: {{ postgres_health_status.postgres_user_ok }}"
+      - "Admin User OK: {{ postgres_health_status.admin_user_ok }}"
+      - "Configuration Accessible: {{ postgres_health_status.config_accessible }}"
+      - "Overall Status: {{ 'HEALTHY' if (postgres_health_status.directories_ok and postgres_health_status.process_running and postgres_health_status.accepting_connections and postgres_health_status.admin_user_ok) else 'ISSUES DETECTED' }}"
+
+# --- Failure Reporting ------------------------------------------------------
+
+- name: Fail if critical issues detected
+  fail:
+    msg: "Critical PostgreSQL issues detected. Check the health summary above for details."
+  when: not (postgres_health_status.directories_ok and postgres_health_status.process_running and postgres_health_status.accepting_connections and postgres_health_status.admin_user_ok)

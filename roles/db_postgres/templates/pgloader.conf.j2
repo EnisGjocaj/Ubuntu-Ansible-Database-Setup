@@ -1,0 +1,14 @@
+LOAD DATABASE
+    FROM sqlite://{{ sqlite_file }}
+    INTO {{ postgres_connection }}
+
+WITH include drop, create tables, create indexes, reset sequences
+
+SET work_mem to '16MB', maintenance_work_mem to '512 MB'
+
+CAST type datetime to timestamptz drop default drop not null using zero-dates-to-null,
+     type date drop not null drop default using zero-dates-to-null
+
+BEFORE LOAD DO
+    $$ drop schema if exists {{ target_schema }} cascade; $$,
+    $$ create schema {{ target_schema }}; $$;

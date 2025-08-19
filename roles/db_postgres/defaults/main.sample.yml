@@ -1,0 +1,143 @@
+# =============================================================================
+# PostgreSQL Role Default Variables (Sample, No Credentials)
+# =============================================================================
+# Default configuration for PostgreSQL setup with support for multiple
+# databases, users, and flexible import options.
+# =============================================================================
+
+# --- PostgreSQL Basic Settings ----------------------------------------------
+
+postgres_bind_address: "127.0.0.1"
+postgres_port: 5432
+postgres_admin_user: "admin_user"
+postgres_admin_password: "CHANGE_ME"
+
+# --- Database and User Configuration ----------------------------------------
+
+# Multiple databases can be defined with their respective owners
+postgres_databases:
+  - name: sample_db
+    owner: sample_user
+    encoding: UTF8
+    lc_collate: en_US.UTF-8
+    lc_ctype: en_US.UTF-8
+    template: template0
+    # additional_users:
+    #   - name: readonly_user
+    #     database_privs: SELECT
+
+# Multiple users can be defined with different privileges
+postgres_users:
+  - name: sample_user
+    password: "CHANGE_ME"
+    role_attr_flags: CREATEDB
+    # expires: "2099-12-31"
+
+# Example of additional databases and users:
+# postgres_databases:
+#   - name: app1_prod
+#     owner: app1_user
+#   - name: app2_dev
+#     owner: app2_user
+#     additional_users:
+#       - name: app2_readonly
+#         database_privs: SELECT
+#
+# postgres_users:
+#   - name: app1_user
+#     password: "CHANGE_ME"
+#   - name: app2_user
+#     password: "CHANGE_ME"
+#   - name: app2_readonly
+#     password: "CHANGE_ME"
+#   - name: analytics_user
+#     password: "CHANGE_ME"
+#     role_attr_flags: CREATEDB,CREATEROLE
+
+# --- SQLite Import Configuration --------------------------------------------
+
+# SQLite files to import (optional)
+postgres_sqlite_import:
+  - files/sample-db.sqlite3
+
+# postgres_sqlite_import: []
+
+# --- SQL Import Configuration (Alternative to SQLite) -----------------------
+
+# postgres_imports:
+#   - db: sample_db
+#     dump_file: files/sample_dump.sql
+#     method: psql
+
+# --- Backup Configuration ---------------------------------------------------
+
+postgres_backup_dir: "/var/backups/postgres"
+postgres_backup_keep_days: 28
+postgres_backup_time: "3:00"         # 24-hour format
+postgres_backup_weekday: 0           # 0 = Sunday
+
+# --- PostgreSQL Configuration Settings --------------------------------------
+
+postgres_max_connections: 100
+postgres_shared_buffers: "128MB"
+postgres_effective_cache_size: "1GB"
+postgres_maintenance_work_mem: "64MB"
+postgres_checkpoint_completion_target: 0.7
+postgres_wal_buffers: "16MB"
+postgres_default_statistics_target: 100
+
+# Logging configuration
+postgres_logging_collector: "on"
+postgres_log_directory: "pg_log"
+postgres_log_filename: "postgresql-%Y-%m-%d_%H%M%S.log"
+postgres_log_min_messages: "warning"
+postgres_log_min_error_statement: "error"
+postgres_log_connections: "off"
+postgres_log_disconnections: "off"
+
+# --- Security Settings ------------------------------------------------------
+
+postgres_auth_method_local: "md5"
+postgres_auth_method_host: "md5"
+
+# postgres_ssl: "on"
+# postgres_ssl_cert_file: "server.crt"
+# postgres_ssl_key_file: "server.key"
+
+# --- Performance Tuning (Optional) ------------------------------------------
+
+# postgres_shared_preload_libraries: "pg_stat_statements"
+# postgres_random_page_cost: 1.1
+# postgres_seq_page_cost: 1.0
+# postgres_work_mem: "4MB"
+# postgres_max_worker_processes: 8
+# postgres_max_parallel_workers_per_gather: 2
+
+# --- Extension Management (Optional) ----------------------------------------
+
+# postgres_extensions:
+#   - name: pg_stat_statements
+#     database: postgres
+#   - name: uuid-ossp
+#     database: sample_db
+
+# --- Monitoring and Maintenance (Optional) ----------------------------------
+
+# postgres_track_activities: "on"
+# postgres_track_counts: "on"
+# postgres_autovacuum: "on"
+# postgres_autovacuum_max_workers: 3
+# postgres_autovacuum_naptime: "1min"
+
+# --- Development/Testing Options --------------------------------------------
+
+postgres_debug_mode: false
+postgres_skip_validations: false
+
+# --- Version and Compatibility ----------------------------------------------
+
+# postgres_version_major: "16"
+
+postgres_timezone: "UTC"
+postgres_datestyle: "iso, mdy"
+postgres_default_text_search_config: "pg_catalog.english"

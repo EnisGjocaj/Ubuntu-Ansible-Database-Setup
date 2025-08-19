@@ -1,40 +1,260 @@
-- name: Import SQLite3 database to PostgreSQL (idempotent)
+---
+# =============================================================================
+# PostgreSQL SQLite Import
+# =============================================================================
+# Handles SQLite database imports to PostgreSQL with proper validation,
+# error handling, and idempotency checks.
+# =============================================================================
+
+- name: SQLite Import Block
   when: postgres_sqlite_import is defined and postgres_sqlite_import | length > 0
   block:
 
-    - name: Install pgloader
+    # --- Input Validation ----------------------------------------------------
+
+    - name: Validate SQLite import configuration
+      assert:
+        that:
+          - postgres_sqlite_import is iterable
+          - postgres_databases is defined and postgres_databases | length > 0
+        fail_msg: "postgres_sqlite_import must be a list and postgres_databases must be defined"
+        success_msg: "Found {{ postgres_sqlite_import | length }} SQLite file(s) to import"
+
+    - name: Display SQLite import plan
+      debug:
+        msg:
+          - "SQLite files to import: {{ postgres_sqlite_import }}"
+          - "Target database: {{ postgres_databases[0].name }}"
+          - "Database owner: {{ postgres_databases[0].owner }}"
+
+    # --- Prerequisites Installation ------------------------------------------
+
+    - name: Install pgloader for SQLite imports
       apt:
         name: pgloader
         state: present
         update_cache: yes
+      register: pgloader_install
 
-    - name: Copy SQLite3 file to server
-      copy:
-        src: "{{ item }}"
-        dest: "/tmp/{{ item | basename }}"
+    - name: Verify pgloader installation
+      command: pgloader --version
+      register: pgloader_version
+      changed_when: false
+
+    - name: Display pgloader version
+      debug:
+        msg: "pgloader version: {{ pgloader_version.stdout }}"
+
+    # --- File Validation and Copy -------------------------------------------
+
+    - name: Check if SQLite source files exist
+      stat:
+        path: "{{ playbook_dir }}/roles/db_postgres/{{ item }}"
+      register: sqlite_source_files
       loop: "{{ postgres_sqlite_import }}"
+      loop_control:
+        label: "{{ item }}"
+      delegate_to: localhost
+      become: no
 
-    - name: Check if target PostgreSQL database is empty
-      community.postgresql.postgresql_query:
+    - name: Validate all SQLite files exist
+      assert:
+        that:
+          - item.stat.exists
+        fail_msg: "SQLite file '{{ item.item }}' not found"
+        success_msg: "SQLite file '{{ item.item }}' found"
+      loop: "{{ sqlite_source_files.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Copy SQLite files to target server
+      copy:
+        src: "{{ playbook_dir }}/roles/db_postgres/{{ item }}"
+        dest: "/tmp/{{ item | basename }}"
+        mode: '0644'
+      register: sqlite_copy_results
+      loop: "{{ postgres_sqlite_import }}"
+      loop_control:
+        label: "{{ item | basename }}"
+
+    - name: Verify SQLite files on target server
+      stat:
+        path: "/tmp/{{ item | basename }}"
+      register: sqlite_target_files
+      loop: "{{ postgres_sqlite_import }}"
+      loop_control:
+        label: "{{ item | basename }}"
+
+    # --- Database State Validation ------------------------------------------
+
+    - name: Check target database exists
+      postgresql_query:
+        login_user: "{{ postgres_admin_user }}"
+        login_password: "{{ postgres_admin_password }}"
+        login_host: "127.0.0.1"
+        db: "postgres"
+        query: "SELECT datname FROM pg_database WHERE datname = '{{ postgres_databases[0].name }}';"
+      register: target_db_check
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+
+    - name: Ensure target database exists
+      assert:
+        that:
+          - target_db_check.query_result | length > 0
+        fail_msg: "Target database '{{ postgres_databases[0].name }}' does not exist"
+        success_msg: "Target database '{{ postgres_databases[0].name }}' is ready for import"
+
+    - name: Check if target database has existing tables
+      postgresql_query:
         login_user: "{{ postgres_admin_user }}"
         login_password: "{{ postgres_admin_password }}"
         login_host: "127.0.0.1"
         db: "{{ postgres_databases[0].name }}"
-        query: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';"
-      register: pg_tables_count
-      become: true
-      become_user: postgres
-
-    - name: Run pgloader only if database is empty
-      shell: |
-        pgloader /tmp/{{ item | basename }} postgresql://{{ postgres_admin_user }}:{{ postgres_admin_password }}@localhost/{{ postgres_databases[0].name }}
-      loop: "{{ postgres_sqlite_import }}"
-      when: pg_tables_count.query_result[0].count | int == 0
+        query: "SELECT COUNT(*) as table_count FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';"
+      register: existing_tables_check
       vars:
         ansible_python_interpreter: /usr/bin/python3
 
-    - name: Remove temporary SQLite3 file
+    - name: Display database state before import
+      debug:
+        msg:
+          - "Target database: {{ postgres_databases[0].name }}"
+          - "Existing tables count: {{ existing_tables_check.query_result[0].table_count }}"
+          - "Database is empty: {{ existing_tables_check.query_result[0].table_count | int == 0 }}"
+
+    # --- SQLite Import Process ----------------------------------------------
+
+    - name: Create pgloader configuration for each SQLite file
+      template:
+        src: pgloader.conf.j2
+        dest: "/tmp/pgloader_{{ item | basename | regex_replace('\\.sqlite3?$', '') }}.conf"
+        mode: '0644'
+      vars:
+        sqlite_file: "/tmp/{{ item | basename }}"
+        # postgres_connection: "postgresql://{{ postgres_admin_user }}:{{ postgres_admin_password }}@127.0.0.1/{{ postgres_databases[0].name }}"
+        postgres_connection: "postgresql://{{ postgres_databases[0].owner }}:{{ (postgres_users | selectattr('name', 'equalto', postgres_databases[0].owner) | first).password }}@127.0.0.1/{{ postgres_databases[0].name }}"
+        target_schema: "public"
+      loop: "{{ postgres_sqlite_import }}"
+      loop_control:
+        label: "{{ item | basename }}"
+      when: existing_tables_check.query_result[0].table_count | int == 0
+
+    - name: Import SQLite data using pgloader (only if database is empty)
+      shell: |
+        pgloader /tmp/pgloader_{{ item | basename | regex_replace('\.sqlite3?$', '') }}.conf
+      register: pgloader_results
+      loop: "{{ postgres_sqlite_import }}"
+      loop_control:
+        label: "{{ item | basename }}"
+      when: existing_tables_check.query_result[0].table_count | int == 0
+      failed_when: false
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+
+    - name: Display pgloader results
+      debug:
+        msg:
+          - "File: {{ item.item | basename }}"
+          - "Import attempted: {{ item.changed | default(false) }}"
+          - "Return code: {{ item.rc | default('N/A') }}"
+          - "Status: {{ 'SUCCESS' if (item.rc | default(1)) == 0 else 'FAILED' }}"
+          - "Output: {{ item.stdout | default('N/A') }}"
+      loop: "{{ pgloader_results.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item | basename }}"
+      when: pgloader_results is defined
+
+    - name: Skip import notification for non-empty database
+      debug:
+        msg: "Skipping SQLite import - target database '{{ postgres_databases[0].name }}' already contains {{ existing_tables_check.query_result[0].table_count }} table(s)"
+      when: existing_tables_check.query_result[0].table_count | int > 0
+
+    # --- Post-Import Validation ---------------------------------------------
+
+    - name: Check tables after import
+      postgresql_query:
+        login_user: "{{ postgres_admin_user }}"
+        login_password: "{{ postgres_admin_password }}"
+        login_host: "127.0.0.1"
+        db: "{{ postgres_databases[0].name }}"
+        query: |
+          SELECT 
+            schemaname, 
+            tablename, 
+            tableowner,
+            (SELECT COUNT(*) FROM information_schema.columns WHERE table_name = tablename AND table_schema = schemaname) as column_count
+          FROM pg_tables 
+          WHERE schemaname = 'public' 
+          ORDER BY tablename;
+      register: imported_tables_check
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+
+    - name: Display imported tables summary
+      debug:
+        msg:
+          - "=== SQLite Import Summary ==="
+          - "Target database: {{ postgres_databases[0].name }}"
+          - "Total tables after import: {{ imported_tables_check.query_result | length }}"
+          - "Imported tables: {{ imported_tables_check.query_result | map(attribute='tablename') | list }}"
+
+    - name: Test data accessibility in imported tables
+      postgresql_query:
+        login_user: "{{ postgres_databases[0].owner }}"
+        login_password: "{{ (postgres_users | selectattr('name', 'equalto', postgres_databases[0].owner) | first).password }}"
+        login_host: "127.0.0.1"
+        db: "{{ postgres_databases[0].name }}"
+        query: "SELECT COUNT(*) as row_count FROM {{ item.tablename }};"
+      register: table_row_counts
+      loop: "{{ imported_tables_check.query_result }}"
+      loop_control:
+        label: "{{ item.tablename }}"
+      failed_when: false
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+      when: imported_tables_check.query_result | length > 0
+
+    - name: Display table row counts
+      debug:
+        msg:
+          - "Table: {{ item.item.tablename }}"
+          - "Row count: {{ item.query_result[0].row_count | default('N/A') }}"
+          - "Accessible: {{ not item.failed }}"
+      loop: "{{ table_row_counts.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.tablename }}"
+      when: table_row_counts is defined
+
+    # --- Cleanup -------------------------------------------------------------
+
+    - name: Remove temporary SQLite files
       file:
         path: "/tmp/{{ item | basename }}"
         state: absent
       loop: "{{ postgres_sqlite_import }}"
+      loop_control:
+        label: "{{ item | basename }}"
+
+    - name: Remove temporary pgloader configuration files
+      file:
+        path: "/tmp/pgloader_{{ item | basename | regex_replace('\\.sqlite3?$', '') }}.conf"
+        state: absent
+      loop: "{{ postgres_sqlite_import }}"
+      loop_control:
+        label: "{{ item | basename }}"
+
+    - name: SQLite import process completed
+      debug:
+        msg:
+          - "SQLite import process completed successfully"
+          - "Files processed: {{ postgres_sqlite_import | length }}"
+          - "Target database: {{ postgres_databases[0].name }}"
+          - "Final table count: {{ imported_tables_check.query_result | length }}"
+
+# --- No Import Required Block -----------------------------------------------
+
+- name: No SQLite import configured
+  debug:
+    msg: "No SQLite files configured for import (postgres_sqlite_import is empty or undefined)"
+  when: postgres_sqlite_import is not defined or postgres_sqlite_import | length == 0

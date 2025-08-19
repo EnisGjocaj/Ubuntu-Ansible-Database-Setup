@@ -1,66 +1,174 @@
 ---
-# ------------------------------
-# PostgreSQL Configuration Play
-# ------------------------------
+# =============================================================================
+# PostgreSQL Configuration
+# =============================================================================
 
-# Detect installed PostgreSQL version
-- name: Get installed PostgreSQL major version
-  shell: "psql -V | awk '{print $3}' | cut -d '.' -f1"
-  register: postgres_version
+# --- PostgreSQL Version Detection -------------------------------------------
+
+- name: Detect PostgreSQL version from system
+  shell: "pg_config --version | awk '{print $2}' | cut -d '.' -f1"
+  register: postgres_version_result
   changed_when: false
-  ignore_errors: yes  # prevent failure if psql not installed yet
+  failed_when: false
 
-- name: Set PostgreSQL major version (default 16)
+- name: Set PostgreSQL major version
   set_fact:
-    postgres_version_major: "{{ postgres_version.stdout if postgres_version.stdout | length > 0 else '16' }}"
+    postgres_version_major: "{{ postgres_version_result.stdout if postgres_version_result.rc == 0 and postgres_version_result.stdout | length > 0 else '16' }}"
 
-# Ensure PostgreSQL service is running
-- name: Ensure PostgreSQL service is started and enabled
+- name: Display detected PostgreSQL version
+  debug:
+    msg: "Using PostgreSQL version: {{ postgres_version_major }}"
+
+# --- Simple PostgreSQL Management -------------------------------------------
+
+- name: Stop PostgreSQL service completely
+  service:
+    name: postgresql
+    state: stopped
+  ignore_errors: yes
+
+- name: Kill any remaining PostgreSQL processes
+  shell: "pkill -f postgres || true"
+  ignore_errors: yes
+
+- name: Wait for processes to stop
+  pause:
+    seconds: 5
+
+- name: Remove any corrupted cluster files
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/var/lib/postgresql/{{ postgres_version_major }}/main"
+    - "/etc/postgresql/{{ postgres_version_major }}/main"
+  ignore_errors: yes
+
+- name: Create PostgreSQL directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0755'
+  loop:
+    - "/var/lib/postgresql/{{ postgres_version_major }}"
+    - "/etc/postgresql/{{ postgres_version_major }}/main"
+
+- name: Initialize PostgreSQL database with simple command
+  become: true
+  become_user: postgres
+  shell: |
+    /usr/lib/postgresql/{{ postgres_version_major }}/bin/initdb \
+      --pgdata=/var/lib/postgresql/{{ postgres_version_major }}/main \
+      --auth-local=trust \
+      --auth-host=trust \
+      --encoding=UTF8 \
+      --locale=C
+  args:
+    creates: "/var/lib/postgresql/{{ postgres_version_major }}/main/PG_VERSION"
+
+- name: Create basic postgresql.conf
+  copy:
+    dest: "/etc/postgresql/{{ postgres_version_major }}/main/postgresql.conf"
+    owner: postgres
+    group: postgres
+    mode: '0644'
+    content: |
+      # Basic PostgreSQL Configuration
+      listen_addresses = '127.0.0.1'
+      port = 5432
+      max_connections = 100
+      shared_buffers = 128MB
+      
+      # Logging
+      logging_collector = on
+      log_directory = 'log'
+      log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+      
+      # Data directory
+      data_directory = '/var/lib/postgresql/{{ postgres_version_major }}/main'
+      hba_file = '/etc/postgresql/{{ postgres_version_major }}/main/pg_hba.conf'
+      ident_file = '/etc/postgresql/{{ postgres_version_major }}/main/pg_ident.conf'
+
+- name: Create basic pg_hba.conf
+  copy:
+    dest: "/etc/postgresql/{{ postgres_version_major }}/main/pg_hba.conf"
+    owner: postgres
+    group: postgres
+    mode: '0640'
+    content: |
+      # PostgreSQL Client Authentication Configuration File
+      # TYPE  DATABASE        USER            ADDRESS                 METHOD
+      
+      # "local" is for Unix domain socket connections only
+      local   all             postgres                                trust
+      local   all             all                                     trust
+      
+      # IPv4 local connections:
+      host    all             all             127.0.0.1/32            trust
+      
+      # IPv6 local connections:
+      host    all             all             ::1/128                 trust
+
+- name: Create pg_ident.conf
+  copy:
+    dest: "/etc/postgresql/{{ postgres_version_major }}/main/pg_ident.conf"
+    owner: postgres
+    group: postgres
+    mode: '0640'
+    content: |
+      # PostgreSQL User Name Maps
+      # MAPNAME       SYSTEM-USERNAME         PG-USERNAME
+
+- name: Start PostgreSQL with direct command
+  become: true
+  become_user: postgres
+  shell: |
+    /usr/lib/postgresql/{{ postgres_version_major }}/bin/pg_ctl \
+      -D /var/lib/postgresql/{{ postgres_version_major }}/main \
+      -l /var/lib/postgresql/{{ postgres_version_major }}/main/log/postgresql.log \
+      start
+  register: pg_start_result
+  failed_when: false
+
+- name: Wait for PostgreSQL to start
+  pause:
+    seconds: 10
+
+- name: Check if PostgreSQL is running
+  shell: "pg_isready -h 127.0.0.1 -p 5432"
+  register: pg_ready_check
+  retries: 10
+  delay: 3
+  until: pg_ready_check.rc == 0
+  failed_when: false
+
+- name: Display PostgreSQL startup status
+  debug:
+    msg:
+      - "PostgreSQL start result: {{ pg_start_result.rc | default('N/A') }}"
+      - "PostgreSQL ready check: {{ pg_ready_check.rc | default('N/A') }}"
+      - "PostgreSQL is ready: {{ pg_ready_check.rc == 0 }}"
+
+- name: Start systemd PostgreSQL service
   service:
     name: postgresql
     state: started
     enabled: yes
 
-# ------------------------------
-# PostgreSQL Cluster Setup
-# ------------------------------
+- name: Final readiness check
+  shell: "pg_isready -h 127.0.0.1 -p 5432"
+  register: final_ready_check
+  retries: 15
+  delay: 2
+  until: final_ready_check.rc == 0
 
-- name: Check if PostgreSQL cluster already exists
-  stat:
-    path: "/var/lib/postgresql/{{ postgres_version_major }}/main"
-  register: postgres_cluster_dir
-
-- name: Initialize PostgreSQL cluster if not exists
-  command: "pg_createcluster {{ postgres_version_major }} main --start"
-  args:
-    creates: "/var/lib/postgresql/{{ postgres_version_major }}/main"
-  when: not postgres_cluster_dir.stat.exists
-  become: true
-  become_user: postgres
-
-- name: Deploy custom PostgreSQL configuration
-  template:
-    src: postgresql.conf.j2
-    dest: "/etc/postgresql/{{ postgres_version_major }}/main/postgresql.conf"
-    owner: postgres
-    group: postgres
-    mode: '0644'
-  notify: Restart PostgreSQL
-
-
-- name: Ensure PostgreSQL cluster is running
-  service:
-    name: "postgresql@{{ postgres_version_major }}-main"
-    state: started
-    enabled: yes
-
-- name: Debug PostgreSQL cluster directory
+- name: Display final status
   debug:
-    msg: "PostgreSQL cluster directory at /var/lib/postgresql/{{ postgres_version_major }}/main exists={{ postgres_cluster_dir.stat.exists }}"
+    msg: "PostgreSQL is ready and accepting connections!"
 
-# ------------------------------
-# PostgreSQL Admin User & DB
-# ------------------------------
+# --- Admin User Creation ----------------------------------------------------
 
 - name: Create PostgreSQL admin user
   become: true
@@ -70,5 +178,51 @@
     password: "{{ postgres_admin_password }}"
     role_attr_flags: "CREATEDB,CREATEROLE,SUPERUSER"
     state: present
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
 
+# --- Update authentication to use passwords --------------------------------
 
+- name: Update pg_hba.conf for password authentication
+  copy:
+    dest: "/etc/postgresql/{{ postgres_version_major }}/main/pg_hba.conf"
+    owner: postgres
+    group: postgres
+    mode: '0640'
+    content: |
+      # PostgreSQL Client Authentication Configuration File
+      # TYPE  DATABASE        USER            ADDRESS                 METHOD
+      
+      # "local" is for Unix domain socket connections only
+      local   all             postgres                                peer
+      local   all             all                                     md5
+      
+      # IPv4 local connections:
+      host    all             {{ postgres_admin_user }}        127.0.0.1/32            md5
+      host    all             all             127.0.0.1/32            md5
+      
+      # IPv6 local connections:
+      host    all             all             ::1/128                 md5
+
+- name: Reload PostgreSQL configuration
+  become: true
+  become_user: postgres
+  shell: "psql -c 'SELECT pg_reload_conf();'"
+  ignore_errors: yes
+
+# --- Final Validation -------------------------------------------------------
+
+- name: Test admin user connection
+  postgresql_query:
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    login_host: "127.0.0.1"
+    db: "postgres"
+    query: "SELECT version();"
+  register: admin_connection_test
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Display PostgreSQL version from admin connection
+  debug:
+    msg: "PostgreSQL admin connection successful: {{ admin_connection_test.query_result[0].version }}"
